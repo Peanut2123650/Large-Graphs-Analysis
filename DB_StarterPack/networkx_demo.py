@@ -1,12 +1,13 @@
 # networkx_demo.py
 # Extended example of running graph algorithms from the exported CSV.
 # Usage:
-#   pip install pandas networkx python-louvain
+#   pip install pandas networkx python-louvain matplotlib
 #   python networkx_demo.py
 
 import pandas as pd
 import networkx as nx
-import ast  # for safely parsing list strings
+import ast
+import matplotlib.pyplot as plt
 
 try:
     import community as community_louvain  # python-louvain package
@@ -58,10 +59,11 @@ print("Wrote pagerank.csv")
 # ----------------------------
 # Community detection
 # ----------------------------
+comm_df = None
 if community_louvain:
     partition = community_louvain.best_partition(G, weight="weight")
-    communities = set(partition.values())
-    print(f"\nLouvain communities found: {len(communities)}")
+    communities_set = set(partition.values())
+    print(f"\nLouvain communities found: {len(communities_set)}")
 
     comm_df = pd.DataFrame(
         [(uid, users.loc[users["_id"] == uid, "name"].values[0] if not users.loc[users["_id"] == uid].empty else "Unknown", comm)
@@ -140,3 +142,57 @@ for cand, score in recommend_friends(example_user, top_k=5):
     name_row = users.loc[users["_id"] == cand, "name"]
     name = name_row.values[0] if not name_row.empty else "Unknown"
     print(f"  {cand} ({name}) score={score}")
+
+    
+# ----------------------------
+# Visualization of communities
+# ----------------------------
+import matplotlib.pyplot as plt
+
+if 'comm_df' in globals() and comm_df is not None:
+    print("\nDrawing community visualization...")
+
+    # Use spring layout with larger k and more iterations for better separation
+    pos = nx.spring_layout(G, k=0.5, iterations=200, seed=42)
+
+    # Get community mapping
+    comm_map = dict(zip(comm_df["_id"], comm_df["louvain_comm"]))
+    pr_map = dict(zip(pr_df["_id"], pr_df["pagerank"]))
+
+    # Assign colors based on community
+    communities = list(set(comm_map.values()))
+    color_map = {c: plt.cm.tab20(i % 20) for i, c in enumerate(communities)}
+
+    node_colors = [color_map[comm_map[n]] for n in G.nodes()]
+    # Scale node sizes by PageRank (rescaled for visibility)
+    min_size, max_size = 50, 1000
+    pr_values = list(pr_map.values())
+    pr_min, pr_max = min(pr_values), max(pr_values)
+    node_sizes = [
+        min_size + (max_size - min_size) * (pr_map.get(n, pr_min) - pr_min) / (pr_max - pr_min)
+        for n in G.nodes()
+    ]
+
+    plt.figure(figsize=(14, 12))
+    nx.draw_networkx(
+        G,
+        pos,
+        with_labels=False,
+        node_color=node_colors,
+        node_size=node_sizes,
+        edge_color="lightgray",
+        alpha=0.7
+    )
+
+    # Legend for communities
+    for comm_id, color in color_map.items():
+        plt.scatter([], [], c=[color], label=f"Community {comm_id}")
+    plt.legend(scatterpoints=1, fontsize=10)
+
+    plt.title("Social Network Communities (colored by Louvain, size = PageRank)", fontsize=16)
+    plt.axis("off")
+    plt.tight_layout()
+    plt.savefig("network_communities.png", dpi=300)
+    plt.show()
+
+    print("Saved visualization as network_communities.png")
