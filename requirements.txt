@@ -1,0 +1,6 @@
+faker
+pymongo
+networkx
+matplotlib
+pandas
+jupyter
