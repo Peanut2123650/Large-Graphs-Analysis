@@ -35,6 +35,40 @@ for _, row in friend_edges.iterrows():
 print("Nodes:", G.number_of_nodes(), "Edges:", G.number_of_edges())
 
 # ----------------------------
+#SubGraph selection
+# ----------------------------
+def multi_attribute_subgraph(G, users, **kwargs):
+
+    selected_ids = set(users["_id"])  # start with all users
+
+    for attr, val in kwargs.items():
+        if val is not None:
+            # Special handling for languages and interests: check for any match in lists
+            if attr in ["languages", "interests"]:
+                matched = users[users[attr].apply(
+                    lambda x: bool(set(val) & set(parse_list_field(x)))
+                )]["_id"]
+            elif isinstance(val, (list, set)):
+                matched = users[users[attr].isin(val)]["_id"]
+            else:
+                matched = users[users[attr] == val]["_id"]
+            selected_ids = selected_ids & set(matched)
+
+    return G.subgraph(selected_ids).copy()
+
+'''
+# Users in Mumbai, age 20-25, interested in 'Music', primary language 'en'
+sub_g = multi_attribute_subgraph(
+    G, users,
+    city='Mumbai',
+    age=range(20, 26),
+    interests=['Music'],
+    primaryLang='en'
+)
+print("Filtered nodes:", sub_g.number_of_nodes(), "Filtered edges:", sub_g.number_of_edges())
+
+'''
+# ----------------------------
 # PageRank
 # ----------------------------
 pr = nx.pagerank(G, weight="weight")
