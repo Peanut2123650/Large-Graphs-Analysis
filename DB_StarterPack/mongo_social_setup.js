@@ -13,6 +13,7 @@ const FOLLOW_MIN = 2;
 const FOLLOW_MAX = 6;
 const N_INTERACTIONS = 15000;
 const BATCH_SIZE = 1000;
+let GLOBAL_USER_ID = 1; // Global variable for user ID
 
 // ---------------- RNG ----------------
 let _seed = 1234567;
@@ -95,12 +96,11 @@ for(let i=0;i<nCommunities;i++){
   rem -= take;
 }
 
-let uidIndex = 0;
 const communityOf = {};
 for(let c=0;c<nCommunities;c++){
   const size = communities[c];
   for(let j=0;j<size;j++){
-    const _id = new ObjectId();
+    const _id = GLOBAL_USER_ID++; // Assign the global ID and increment it
     const gender = rand() < 0.5 ? 'female' : 'male';
     const place = choice(cities);
     const primary = pickPrimaryLang(place.lang);
@@ -119,8 +119,7 @@ for(let c=0;c<nCommunities;c++){
       languages: languagesList, primaryLang: primary, joinedAt: dateJoined,
       education, profession, interests, purpose, thirdParty, community: c
     });
-    communityOf[_id.valueOf()] = c;
-    uidIndex++;
+    communityOf[_id] = c;
   }
 }
 db.users.insertMany(users);
@@ -140,10 +139,10 @@ for(const u of users){
   idsByCity[c].push(u._id);
 }
 const degree = {};
-for(const u of users) degree[u._id.valueOf()] = 0;
+for(const u of users) degree[u._id] = 0;
 
 function pairKey(a,b){
-  const s = a.valueOf().toString(), t = b.valueOf().toString();
+  const s = a.toString(), t = b.toString(); // Use .toString() on numbers
   return (s < t) ? `${s}|${t}` : `${t}|${s}`;
 }
 
@@ -161,12 +160,11 @@ let remainingDegree = targetEdges * 2;
 for (const u of users) {
   let d = Math.max(1, Math.floor(randint(AVG_DEGREE - FRIEND_DEGREE_VARIANCE, AVG_DEGREE + FRIEND_DEGREE_VARIANCE)));
   if (remainingDegree - d < 0) d = remainingDegree;
-  targetDegrees[u._id.valueOf()] = d;
+  targetDegrees[u._id] = d;
   remainingDegree -= d;
   if (remainingDegree <= 0) break;
 }
 if (remainingDegree > 0) {
-  let idx = 0;
   for (const id in targetDegrees) {
     targetDegrees[id]++;
     remainingDegree--;
@@ -189,12 +187,13 @@ function pickNeighbor(uObj){
   } else {
     pool = users.map(x => x._id);
   }
-  const candidates = sample(pool.filter(id => !id.equals(uId)), Math.min(6, pool.length-1));
+  // Use !== for number comparison instead of .equals()
+  const candidates = sample(pool.filter(id => id !== uId), Math.min(6, pool.length-1));
   let best = null;
   let bestDeg = -1;
   for(const cand of candidates){
-    const dv = degree[cand.valueOf()] || 0;
-    if(dv > bestDeg && !cand.equals(uId)) { best = cand; bestDeg = dv; }
+    const dv = degree[cand] || 0; // Access degree directly with number
+    if(dv > bestDeg && cand !== uId) { best = cand; bestDeg = dv; }
   }
   if(!best && candidates.length) best = candidates[0];
   return best;
@@ -203,19 +202,19 @@ function pickNeighbor(uObj){
 let totalEdges = 0;
 for (const u of users) {
   const uId = u._id;
-  const desired = targetDegrees[uId.valueOf()];
+  const desired = targetDegrees[uId];
   let tries = 0;
-  while (degree[uId.valueOf()] < desired && totalEdges < targetEdges) {
+  while (degree[uId] < desired && totalEdges < targetEdges) {
     if (tries++ > desired * 10) break;
     const vId = pickNeighbor(u);
     if (!vId) continue;
-    if (uId.equals(vId)) continue;
+    if (uId === vId) continue; // Use === for number comparison
     const k = pairKey(uId, vId);
     if (friendSet[k]) continue;
     friendSet[k] = true;
     edgeBatch.push({ type: 'friend', src: uId, dst: vId, pair: k, weight: 1.0 });
-    degree[uId.valueOf()]++;
-    degree[vId.valueOf()]++;
+    degree[uId]++;
+    degree[vId]++;
     totalEdges++;
     if (edgeBatch.length >= BATCH_SIZE) flushEdges();
   }
@@ -243,7 +242,7 @@ for(const u of users){
     } else {
       candidate = choice(users)._id;
     }
-    if(candidate.equals(u._id)) continue;
+    if(candidate === u._id) continue; // Use === for number comparison
     const key = `${u._id}|${candidate}`;
     if(followSet[key]) continue;
     followSet[key] = true;
@@ -263,7 +262,7 @@ const interactionTypes = ['message','like','comment','view'];
 for(let i=0;i<N_INTERACTIONS;i++){
   const actor = choice(users)._id;
   const target = choice(users)._id;
-  if(actor.equals(target)) continue;
+  if(actor === target) continue; // Use === for number comparison
   const t = choice(interactionTypes);
   const w = t === 'message' ? 2.0 : t === 'comment' ? 1.5 : t === 'like' ? 1.0 : 0.5;
   interactionsBatch.push({ actor, target, type: t, weight: w, createdAt: new Date() });
