@@ -25,7 +25,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
 edges_path = os.path.join(DATA_DIR, "edges.csv")
-output_path = os.path.join(DATA_DIR, "influence_scores.csv")
+output_path = os.path.join(DATA_DIR, "centrality_influence_scores.csv")
 
 # ----------------------------
 # Load Graph Data
