@@ -1,4 +1,3 @@
-
 // mongo_queries_examples.js
 // Usage (inside mongosh, after using the DB):
 //   use minor_proj
@@ -42,34 +41,30 @@ db.edges.aggregate([
   { $project: { _id: 0, user: '$u.name', deg: 1 } }
 ]).forEach(doc => printjson(doc));
 
-// 4) Followers/following for one user by _id
-// Replace the id string below with any _id from db.users.findOne()._id.valueOf()
+// 4) Followers/following for one user by string _id
 function followerSummary(userIdStr){
-  const uid = ObjectId(userIdStr);
-  const followers = db.edges.countDocuments({ type:'follow', dst: uid });
-  const following = db.edges.countDocuments({ type:'follow', src: uid });
-  const friends = db.edges.countDocuments({ type:'friend', $or: [{src:uid},{dst:uid}] });
-  const u = db.users.findOne({_id: uid}, {projection:{name:1, location:1, primaryLang:1}});
+  const followers = db.edges.countDocuments({ type:'follow', dst: userIdStr });
+  const following = db.edges.countDocuments({ type:'follow', src: userIdStr });
+  const friends = db.edges.countDocuments({ type:'friend', $or: [{src:userIdStr},{dst:userIdStr}] });
+  const u = db.users.findOne({_id: userIdStr}, {projection:{name:1, location:1, primaryLang:1}});
   printjson({ user: u?.name, city: u?.location?.city, primaryLang: u?.primaryLang, followers, following, friends });
 }
 
-// 5) Mutual friends between two users
+// 5) Mutual friends between two users (string _id)
 function mutualFriends(id1Str, id2Str){
-  const id1 = ObjectId(id1Str);
-  const id2 = ObjectId(id2Str);
   const friendsOf = (id) => {
     const res = [];
     db.edges.find({ type:'friend', $or: [{src:id},{dst:id}] }).forEach(e => {
-      res.push(e.src.valueOf().equals(id) ? e.dst : e.src);
+      res.push(e.src === id ? e.dst : e.src);
     });
     return res;
   };
-  const f1 = friendsOf(id1).map(x => x.valueOf().toString());
-  const f2 = new Set(friendsOf(id2).map(x => x.valueOf().toString()));
-  const inter = f1.filter(x => f2.has(x)).map(s => ObjectId(s));
-  const users = db.users.find({_id: { $in: inter }}, {projection:{name:1}}).toArray();
+  const f1 = friendsOf(id1Str);
+  const f2 = new Set(friendsOf(id2Str));
+  const inter = f1.filter(x => f2.has(x));
+  const usersList = db.users.find({_id: { $in: inter }}, {projection:{name:1}}).toArray();
   print("Mutual friend count:", inter.length);
-  users.forEach(u => print(u._id.valueOf(), "-", u.name));
+  usersList.forEach(u => print(u._id, "-", u.name));
 }
 
 // 6) Simple influence score (followers + weighted interactions pointing to user)
@@ -80,7 +75,7 @@ db.users.aggregate([
       from: 'edges',
       let: { uid: '$_id' },
       pipeline: [
-        { $match: { $expr: { $and: [{$eq:['$type','follow']}, {$eq:['$dst','$$uid']}] } } },
+        { $match: { $expr: { $and:[{$eq:['$type','follow']}, {$eq:['$dst','$$uid']}] } } },
         { $count: 'followers' }
       ],
       as: 'fstats'
@@ -96,12 +91,12 @@ db.users.aggregate([
   }},
   { $addFields: {
       followers: { $ifNull: [ { $arrayElemAt: ['$fstats.followers', 0] }, 0 ] },
-      interScore:{ $ifNull: [ { $arrayElemAt: ['$istats.score', 0] }, 0 ] }
+      interScore: { $ifNull: [ { $arrayElemAt: ['$istats.score', 0] }, 0 ] }
   }},
   { $addFields: { influence: { $add: ['$followers', '$interScore'] } } },
   { $sort: { influence: -1 } },
   { $limit: 10 },
-  { $project: { name: 1, followers:1, interScore:1, influence:1, _id:0 } }
+  { $project: { name:1, followers:1, interScore:1, influence:1, _id:0 } }
 ]).forEach(doc => printjson(doc));
 
-print("\nLoaded helper functions: followerSummary(userIdStr), mutualFriends(id1Str, id2Str)");
+print("\nLoaded helper functions: followerSummary(userIdStr), mutualFriends(id1Str)");

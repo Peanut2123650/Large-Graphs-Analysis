@@ -2,7 +2,7 @@
 # Usage:
 #   pip install pymongo pandas
 #   python export_edges_for_networkx.py
-# Writes edges.csv and users.csv to the current directory.
+# Writes edges.csv and users.csv to the ../data/ directory.
 
 import csv
 from pymongo import MongoClient
@@ -16,7 +16,7 @@ db = client[DB_NAME]
 # ----------------------------
 # Export edges
 # ----------------------------
-with open("edges.csv", "w", newline="", encoding="utf-8") as f:
+with open("../data/edges.csv", "w", newline="", encoding="utf-8") as f:
     w = csv.writer(f)
     w.writerow(["src", "dst", "type", "weight"])
     for doc in db.edges.find({}, {"src": 1, "dst": 1, "type": 1, "weight": 1}):
@@ -30,7 +30,7 @@ with open("edges.csv", "w", newline="", encoding="utf-8") as f:
 # ----------------------------
 # Export users
 # ----------------------------
-with open("users.csv", "w", newline="", encoding="utf-8") as f:
+with open("../data/users.csv", "w", newline="", encoding="utf-8") as f:
     w = csv.writer(f)
     w.writerow([
         "_id",
@@ -41,32 +41,20 @@ with open("users.csv", "w", newline="", encoding="utf-8") as f:
         "state",
         "country",
         "primaryLang",
-        "languages",        # store all codes as comma-separated
+        "languages",        # comma-separated codes
         "joinedAt",
         "education",
         "profession",
-        "interests",
+        "interests",        # comma-separated interests
         "purpose",
         "thirdParty",
         "community"
     ])
-    for u in db.users.find({}, {
-        "name": 1,
-        "age": 1,
-        "gender": 1,
-        "location": 1,
-        "primaryLang": 1,
-        "languages": 1,
-        "joinedAt": 1,
-        "education": 1,
-        "profession": 1,
-        "interests": 1,
-        "purpose": 1,
-        "thirdParty": 1,
-        "community": 1
-    }):
+    for u in db.users.find({}):
         loc = u.get("location", {})
         langs = [lang.get("code", "") for lang in u.get("languages", [])]
+        interests = u.get("interests", [])
+        interests = ",".join(interests) if isinstance(interests, list) else interests
         w.writerow([
             str(u["_id"]),
             u.get("name", ""),
@@ -80,10 +68,10 @@ with open("users.csv", "w", newline="", encoding="utf-8") as f:
             u.get("joinedAt", ""),
             u.get("education", ""),
             u.get("profession", ""),
-            ",".join(u.get("interests", [])) if isinstance(u.get("interests", []), list) else u.get("interests", ""),
+            interests,
             u.get("purpose", ""),
             u.get("thirdParty", False),
             u.get("community", "")
         ])
 
-print("✅ Wrote edges.csv and users.csv")
+print("✅ Wrote edges.csv and users.csv to ../data/")

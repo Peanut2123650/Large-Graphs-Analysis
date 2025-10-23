@@ -1,16 +1,21 @@
-# This is a sample Python script.
+# main.py
+import subprocess
 
-# Press Ctrl+F5 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
+def run_generate_network():
+    subprocess.run(["python", "DB_StarterPack/generate_network.py"])
 
+def run_influence_analysis():
+    subprocess.run(["python", "DB_StarterPack/influence_analysis.py"])
 
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press F9 to toggle the breakpoint.
+if __name__ == "__main__":
+    print("\n=== Social Network Project ===")
+    print("1 - Generate New Network")
+    print("2 - Run Influence Analysis on Existing Network")
 
-
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
-    print_hi('PyCharm')
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+    choice = input("\nEnter choice: ").strip()
+    if choice == "1":
+        run_generate_network()
+    elif choice == "2":
+        run_influence_analysis()
+    else:
+        print("❌ Invalid choice.")
