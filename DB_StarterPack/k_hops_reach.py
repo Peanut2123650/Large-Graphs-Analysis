@@ -2,7 +2,7 @@ import pandas as pd
 import networkx as nx
 
 # Load the graph
-edge_df = pd.read_csv('edge.csv')
+edge_df = pd.read_csv(r"C:\Users\p2123\Desktop\COLLEGE\PROJECT_3rdYear\Social_Network_Project\data\edges.csv")
 G = nx.from_pandas_edgelist(edge_df, source='src', target='dst')
 
 def k_hop_nodes(G, node, k):
