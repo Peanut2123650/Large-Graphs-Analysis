@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Social Network Graph</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: white;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #1e293b;
+            margin-bottom: 20px;
+            font-size: 28px;
+        }
+
+        .controls {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .button-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        button {
+            padding: 10px 16px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+            font-size: 14px;
+        }
+
+        button:hover {
+            transform: translateY(-1px);
+        }
+
+        .btn-remove-node, .btn-remove-edge {
+            background: #e2e8f0;
+            color: #475569;
+        }
+
+        .btn-remove-node.active, .btn-remove-edge.active {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-reset {
+            background: #10b981;
+            color: white;
+        }
+
+        .btn-reset:hover {
+            background: #059669;
+        }
+
+        .btn-highlight {
+            background: #f59e0b;
+            color: white;
+        }
+
+        .btn-highlight:hover {
+            background: #d97706;
+        }
+
+        .btn-hops {
+            background: #10b981;
+            color: white;
+        }
+
+        .btn-hops:hover {
+            background: #059669;
+        }
+
+        .input-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .input-wrapper {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        label {
+            font-size: 14px;
+            font-weight: 600;
+            color: #475569;
+        }
+
+        .input-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        input[type="text"], input[type="number"] {
+            padding: 8px 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font-size: 14px;
+            flex: 1;
+        }
+
+        input[type="number"] {
+            width: 70px;
+            flex: 0;
+        }
+
+        input[type="file"] {
+            padding: 8px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font-size: 14px;
+            background: white;
+        }
+
+        .status-message {
+            margin-top: 15px;
+            padding: 12px;
+            background: #dbeafe;
+            border: 1px solid #93c5fd;
+            border-radius: 6px;
+            color: #1e40af;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .graph-container {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        svg {
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            display: block;
+            width: 100%;
+            height: 600px;
+        }
+
+        .instructions {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8fafc;
+            border-radius: 6px;
+            font-size: 14px;
+            color: #475569;
+        }
+
+        .instructions strong {
+            color: #1e293b;
+        }
+
+        .instructions ul {
+            margin-top: 10px;
+            margin-left: 20px;
+        }
+
+        .instructions li {
+            margin-bottom: 5px;
+        }
+
+        @media (max-width: 768px) {
+            .input-group {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Interactive Social Network Graph</h1>
+        
+        <div class="controls">
+            <div class="button-group">
+                <button class="btn-remove-node" onclick="toggleRemoveNode()">
+                    <span>🗑️</span> Remove Node
+                </button>
+                <button class="btn-remove-edge" onclick="toggleRemoveEdge()">
+                    <span>🗑️</span> Remove Edge
+                </button>
+                <button class="btn-reset" onclick="resetGraph()">
+                    <span>↻</span> Reset Graph
+                </button>
+            </div>
+
+            <div class="input-group">
+                <div class="input-wrapper">
+                    <label>Upload CSV (format: source,target)</label>
+                    <input type="file" accept=".csv" onchange="handleFileUpload(event)">
+                </div>
+            </div>
+
+            <div class="input-group">
+                <div class="input-wrapper">
+                    <label>Highlight Nodes (comma-separated)</label>
+                    <div class="input-row">
+                        <input type="text" id="highlightInput" placeholder="e.g., Alice,Bob,Carol">
+                        <button class="btn-highlight" onclick="highlightNodes()">
+                            <span>⭐</span> Highlight
+                        </button>
+                    </div>
+                </div>
+
+                <div class="input-wrapper">
+                    <label>Show K-Hops from Node</label>
+                    <div class="input-row">
+                        <input type="text" id="hopSource" placeholder="Source node">
+                        <input type="number" id="hopDistance" value="2" min="1" max="10">
+                        <button class="btn-hops" onclick="showKHops()">
+                            <span>📡</span> Show Hops
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="statusMessage" style="display: none;"></div>
+        </div>
+
+        <div class="graph-container">
+            <svg id="graph"></svg>
+        </div>
+
+        <div class="instructions">
+            <strong>Instructions:</strong>
+            <ul>
+                <li>Drag nodes to rearrange the graph</li>
+                <li>Use "Remove Node/Edge" buttons to enable deletion mode, then click on elements</li>
+                <li>Enter comma-separated node names to highlight and enlarge them</li>
+                <li>Enter a source node and hop count to visualize information spread (green paths)</li>
+                <li>Upload your own CSV file with "source,target" format</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        let nodes = [];
+        let links = [];
+        let originalData = { nodes: [], links: [] };
+        let selectedMode = null;
+        let simulation = null;
+
+        // Sample data
+        const sampleData = {
+            nodes: [
+                { id: 'Alice' }, { id: 'Bob' }, { id: 'Carol' }, { id: 'David' },
+                { id: 'Eve' }, { id: 'Frank' }, { id: 'Grace' }, { id: 'Henry' }
+            ],
+            links: [
+                { source: 'Alice', target: 'Bob' },
+                { source: 'Alice', target: 'Carol' },
+                { source: 'Bob', target: 'David' },
+                { source: 'Carol', target: 'David' },
+                { source: 'David', target: 'Eve' },
+                { source: 'Eve', target: 'Frank' },
+                { source: 'Frank', target: 'Grace' },
+                { source: 'Grace', target: 'Henry' },
+                { source: 'Bob', target: 'Frank' }
+            ]
+        };
+
+        function initializeGraph() {
+            nodes = JSON.parse(JSON.stringify(sampleData.nodes));
+            links = JSON.parse(JSON.stringify(sampleData.links));
+            originalData = JSON.parse(JSON.stringify(sampleData));
+            renderGraph();
+        }
+
+        function toggleRemoveNode() {
+            selectedMode = selectedMode === 'removeNode' ? null : 'removeNode';
+            document.querySelector('.btn-remove-node').classList.toggle('active');
+            document.querySelector('.btn-remove-edge').classList.remove('active');
+            showStatus(selectedMode === 'removeNode' ? '🖱️ Click on any node to remove it' : '');
+            updateCursors();
+        }
+
+        function toggleRemoveEdge() {
+            selectedMode = selectedMode === 'removeEdge' ? null : 'removeEdge';
+            document.querySelector('.btn-remove-edge').classList.toggle('active');
+            document.querySelector('.btn-remove-node').classList.remove('active');
+            showStatus(selectedMode === 'removeEdge' ? '🖱️ Click on any edge to remove it' : '');
+            updateCursors();
+        }
+
+        function resetGraph() {
+            nodes = JSON.parse(JSON.stringify(originalData.nodes));
+            links = JSON.parse(JSON.stringify(originalData.links));
+            selectedMode = null;
+            document.querySelector('.btn-remove-node').classList.remove('active');
+            document.querySelector('.btn-remove-edge').classList.remove('active');
+            showStatus('');
+            renderGraph();
+        }
+
+        function showStatus(message) {
+            const statusEl = document.getElementById('statusMessage');
+            if (message) {
+                statusEl.textContent = message;
+                statusEl.style.display = 'block';
+            } else {
+                statusEl.style.display = 'none';
+            }
+        }
+
+        function updateCursors() {
+            d3.selectAll('.node').style('cursor', selectedMode === 'removeNode' ? 'pointer' : 'grab');
+            d3.selectAll('.link').style('cursor', selectedMode === 'removeEdge' ? 'pointer' : 'default');
+        }
+
+        function removeNode(nodeId) {
+            nodes = nodes.filter(n => n.id !== nodeId);
+            links = links.filter(l => {
+                const sourceId = typeof l.source === 'object' ? l.source.id : l.source;
+                const targetId = typeof l.target === 'object' ? l.target.id : l.target;
+                return sourceId !== nodeId && targetId !== nodeId;
+            });
+            renderGraph();
+        }
+
+        function removeLink(link) {
+            const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+            const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+            links = links.filter(l => {
+                const lSourceId = typeof l.source === 'object' ? l.source.id : l.source;
+                const lTargetId = typeof l.target === 'object' ? l.target.id : l.target;
+                return !(lSourceId === sourceId && lTargetId === targetId);
+            });
+            renderGraph();
+        }
+
+        function highlightNodes() {
+            const input = document.getElementById('highlightInput').value;
+            const nodeIds = input.split(',').map(n => n.trim()).filter(n => n);
+            
+            d3.selectAll('.node')
+                .transition()
+                .duration(500)
+                .attr('r', d => nodeIds.includes(d.id) ? 18 : 10)
+                .style('fill', d => nodeIds.includes(d.id) ? '#f59e0b' : '#3b82f6');
+        }
+
+        function showKHops() {
+            const source = document.getElementById('hopSource').value.trim();
+            const k = parseInt(document.getElementById('hopDistance').value) || 2;
+
+            if (!source) return;
+
+            const reachableNodes = new Set([source]);
+            const reachableEdges = new Set();
+
+            let currentLevel = [source];
+            for (let hop = 0; hop < k; hop++) {
+                const nextLevel = [];
+                currentLevel.forEach(nodeId => {
+                    links.forEach(link => {
+                        const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+                        const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+
+                        if (sourceId === nodeId && !reachableNodes.has(targetId)) {
+                            reachableNodes.add(targetId);
+                            nextLevel.push(targetId);
+                            reachableEdges.add(`${sourceId}-${targetId}`);
+                        } else if (targetId === nodeId && !reachableNodes.has(sourceId)) {
+                            reachableNodes.add(sourceId);
+                            nextLevel.push(sourceId);
+                            reachableEdges.add(`${sourceId}-${targetId}`);
+                        }
+                    });
+                });
+                currentLevel = nextLevel;
+            }
+
+            d3.selectAll('.node')
+                .transition()
+                .duration(500)
+                .style('fill', d => reachableNodes.has(d.id) ? '#10b981' : '#3b82f6')
+                .attr('r', d => reachableNodes.has(d.id) ? 14 : 10);
+
+            d3.selectAll('.link')
+                .transition()
+                .duration(500)
+                .style('stroke', d => {
+                    const sourceId = d.source.id;
+                    const targetId = d.target.id;
+                    return reachableEdges.has(`${sourceId}-${targetId}`) || 
+                           reachableEdges.has(`${targetId}-${sourceId}`) ? '#10b981' : '#475569';
+                })
+                .style('stroke-width', d => {
+                    const sourceId = d.source.id;
+                    const targetId = d.target.id;
+                    return reachableEdges.has(`${sourceId}-${targetId}`) || 
+                           reachableEdges.has(`${targetId}-${sourceId}`) ? 5 : 3;
+                });
+        }
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const text = e.target.result;
+                    const lines = text.split('\n').filter(line => line.trim());
+                    
+                    const parsedLinks = [];
+                    const nodeSet = new Set();
+
+                    for (let i = 1; i < lines.length; i++) {
+                        const values = lines[i].split(',').map(v => v.trim());
+                        if (values.length >= 2 && values[0] && values[1]) {
+                            parsedLinks.push({ source: values[0], target: values[1] });
+                            nodeSet.add(values[0]);
+                            nodeSet.add(values[1]);
+                        }
+                    }
+
+                    const parsedNodes = Array.from(nodeSet).map(id => ({ id }));
+                    
+                    nodes = parsedNodes;
+                    links = parsedLinks;
+                    originalData = { nodes: parsedNodes, links: parsedLinks };
+                    renderGraph();
+                };
+                reader.readAsText(file);
+            }
+        }
+
+        function renderGraph() {
+            const width = 900;
+            const height = 600;
+
+            d3.select('#graph').selectAll('*').remove();
+
+            const svg = d3.select('#graph');
+
+            simulation = d3.forceSimulation(nodes)
+                .force('link', d3.forceLink(links).id(d => d.id).distance(50))
+                .force('charge', d3.forceManyBody().strength(-100))
+                .force('center', d3.forceCenter(width / 2, height / 2))
+                .force('collision', d3.forceCollide().radius(20))
+                .force('x', d3.forceX(width / 2).strength(0.3))
+                .force('y', d3.forceY(height / 2).strength(0.3));
+
+            const link = svg.append('g')
+                .selectAll('line')
+                .data(links)
+                .join('line')
+                .attr('class', 'link')
+                .style('stroke', '#475569')
+                .style('stroke-width', 3)
+                .style('stroke-opacity', 0.8)
+                .style('cursor', selectedMode === 'removeEdge' ? 'pointer' : 'default')
+                .on('click', function(event, d) {
+                    if (selectedMode === 'removeEdge') {
+                        removeLink(d);
+                    }
+                });
+
+            const node = svg.append('g')
+                .selectAll('circle')
+                .data(nodes)
+                .join('circle')
+                .attr('class', 'node')
+                .attr('r', 10)
+                .style('fill', '#3b82f6')
+                .style('stroke', '#1e40af')
+                .style('stroke-width', 3)
+                .style('cursor', selectedMode === 'removeNode' ? 'pointer' : 'grab')
+                .call(d3.drag()
+                    .on('start', dragstarted)
+                    .on('drag', dragged)
+                    .on('end', dragended))
+                .on('click', function(event, d) {
+                    if (selectedMode === 'removeNode') {
+                        event.stopPropagation();
+                        removeNode(d.id);
+                    }
+                });
+
+            const label = svg.append('g')
+                .selectAll('text')
+                .data(nodes)
+                .join('text')
+                .text(d => d.id)
+                .style('font-size', '14px')
+                .style('font-weight', 'bold')
+                .style('fill', '#1e293b')
+                .style('pointer-events', 'none')
+                .attr('text-anchor', 'middle')
+                .attr('dy', -15);
+
+            simulation.on('tick', () => {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+
+                node
+                    .attr('cx', d => d.x)
+                    .attr('cy', d => d.y);
+
+                label
+                    .attr('x', d => d.x)
+                    .attr('y', d => d.y);
+            });
+
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+        }
+
+        // Initialize on page load
+        window.onload = initializeGraph;
+    </script>
+</body>
+</html>
