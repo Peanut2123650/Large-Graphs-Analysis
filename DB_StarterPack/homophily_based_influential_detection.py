@@ -23,7 +23,7 @@ print("Calculating centrality measures...")
 degree_centrality = nx.degree_centrality(G)
 
 # Approximate betweenness centrality (faster)
-sample_size = min(300, len(G))  # adjust for performance
+sample_size = min(300, len(G))
 betweenness_centrality = nx.betweenness_centrality(G, k=sample_size, normalized=True, seed=42)
 
 # Combine both (equal weighting)
@@ -57,22 +57,24 @@ for node in G.nodes():
 # ===============================
 # 4. Combine Influence Score
 # ===============================
-alpha = 0.6  # give more weight to centrality
+alpha = 0.6  # weight for centrality
 influence_score = {
     n: alpha * combined_centrality[n] + (1 - alpha) * homophily[n]
     for n in G.nodes()
 }
 
 # ===============================
-# 5. Display Top Influencers
+# 5. Save Top 200 Influential Nodes
 # ===============================
-top_k = 15
+top_k = 200
 top_influencers = sorted(influence_score.items(), key=lambda x: x[1], reverse=True)[:top_k]
 
 result_df = pd.DataFrame(top_influencers, columns=["Node", "Influence_Score"])
-print("\nTop Influential Nodes (based on homophily + centrality):")
-print(result_df)
+print(f"\nTop {top_k} Influential Nodes (based on homophily + centrality):")
+print(result_df.head(15))  # show top 15 only for console
 
-# Optionally save
-result_df.to_csv(r"C:\Users\p2123\Desktop\COLLEGE\PROJECT_3rdYear\Social_Network_Project\data\top_influencers.csv", index=False)
-print("\nSaved results to 'homophily_top_influencers.csv'")
+# Save to CSV
+output_path = r"C:\Users\p2123\Desktop\COLLEGE\PROJECT_3rdYear\Social_Network_Project\data\top_200_influential_nodes.csv"
+result_df.to_csv(output_path, index=False)
+
+print(f"\n✅ Saved top {top_k} influential nodes to:\n{output_path}")
