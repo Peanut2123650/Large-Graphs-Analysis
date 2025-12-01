@@ -1,21 +1,21 @@
 // mongo_social_setup.js
-// Generate ~4000 realistic users + attributes and a friend/follow graph ~30k-50k edges.
-// Usage: mongosh < mongo_social_setup.js
-// IMPORTANT: this script uses batch inserts to avoid memory issues.
+// Generate ~15000 realistic users + attributes and a friend/follow graph ~112k-187k edges.
+// Usage: mongosh --file mongo_social_setup.js
+// This version streams user inserts in batches to reduce memory footprint.
 
 const DB_NAME   = "minor_proj";
-const N_USERS   = 4000;
-const TARGET_EDGE_MIN = 30000; // desired min friend edges
-const TARGET_EDGE_MAX = 50000; // desired max friend edges
-const AVG_DEGREE = 10;         // target average friendship degree (~15-25 is reasonable)
-const FRIEND_DEGREE_VARIANCE = 6; // how much each node's degree can vary
+const N_USERS   = 15000;                // number of users
+const TARGET_EDGE_MIN = 112500;         // scaled target friend edges (min)
+const TARGET_EDGE_MAX = 187500;         // scaled target friend edges (max)
+const AVG_DEGREE = 10;                  // nominal average degree (used to derive degree distribution)
+const FRIEND_DEGREE_VARIANCE = 6;
 const FOLLOW_MIN = 2;
 const FOLLOW_MAX = 6;
-const N_INTERACTIONS = 15000;
-const BATCH_SIZE = 1000;
-let GLOBAL_USER_ID = 1; // Global variable for user ID
+const N_INTERACTIONS = 60000;           // total interaction events
+const BATCH_SIZE = 5000;                // batch size for insertMany
+let GLOBAL_USER_ID = 1; // Global / unique user id generator
 
-// ---------------- RNG ----------------
+// ---------------- RNG (deterministic) ----------------
 let _seed = 1234567;
 function rand(){ _seed = ((_seed*1664525) + 1013904223) % 4294967296; return _seed/4294967296; }
 function randint(a,b){ return a + Math.floor(rand()*(b-a+1)); }
@@ -29,6 +29,7 @@ function sample(arr,k){
   }
   return res;
 }
+function randBool(p=0.5){ return rand() < p; }
 
 // ---------------- reference lists ----------------
 const languages = ['hi','bn','ta','te','mr','gu','kn','ml','pa','or','as','en'];
@@ -73,20 +74,22 @@ function dateRandom(startYear=2015){
   const day = String(randint(1,28)).padStart(2,'0');
   return year + "-" + month + "-" + day;
 }
-function randBool(p=0.5){ return rand() < p; }
 
 // ---------------- connect ----------------
 const conn = connect("127.0.0.1:27017/" + DB_NAME);
 const db = conn.getSiblingDB(DB_NAME);
 
-print("Dropping existing collections...");
-db.users.drop(); db.edges.drop(); db.interactions.drop();
+print("Dropping existing collections (if any)...");
+try { db.users.drop(); } catch(e){ print("users drop error:", e); }
+try { db.edges.drop(); } catch(e){ print("edges drop error:", e); }
+try { db.interactions.drop(); } catch(e){ print("interactions drop error:", e); }
 
-// ---------------- generate users ----------------
-print("Generating users and attributes...");
-const users = [];
-const communities = [];
+// ---------------- generate users (streamed) ----------------
+print("Generating users and attributes (streamed in batches)...");
 const nCommunities = randint(12,22);
+
+// Determine community sizes first (so we know community distribution)
+const communities = [];
 let rem = N_USERS;
 for(let i=0;i<nCommunities;i++){
   const min = Math.floor(N_USERS / (nCommunities*2));
@@ -96,192 +99,285 @@ for(let i=0;i<nCommunities;i++){
   rem -= take;
 }
 
-const communityOf = {};
-for(let c=0;c<nCommunities;c++){
-  const size = communities[c];
-  for(let j=0;j<size;j++){
-    const _id = GLOBAL_USER_ID++; // Assign the global ID and increment it
-    const gender = rand() < 0.5 ? 'female' : 'male';
-    const place = choice(cities);
-    const primary = pickPrimaryLang(place.lang);
-    const languagesList = buildLanguages(primary);
-    const education = choice(educations);
-    const profession = choice(professions);
-    const nInterests = randint(1,3);
-    const interests = sample(interestsPool, nInterests);
-    const dateJoined = dateRandom(2016);
-    const purpose = choice(purposes);
-    const thirdParty = randBool(0.25);
-    const name = randomName(gender);
-    users.push({
-      _id, name, age: randint(16, 60), gender,
-      location: { city: place.city, state: place.state, country: 'India' },
-      languages: languagesList, primaryLang: primary, joinedAt: dateJoined,
-      education, profession, interests, purpose, thirdParty, community: c
-    });
-    communityOf[_id] = c;
+// We'll keep only small user-metadata structures in memory:
+// - allUserIds: array of all user ids
+// - idsByCommunity: map community -> [ids]
+// - idsByCity: map city -> [ids]
+// - degree: map id -> 0 (updated as edges are added)
+const allUserIds = [];
+const idsByCommunity = {};
+const idsByCity = {};
+const degree = {}; // initialize later while we add users
+
+// Insert users in batches to reduce memory usage:
+let userBatch = [];
+let currentCommunity = 0;
+let assignedToCurrent = 0;
+let communityIndex = 0;
+for(let created=0; created<N_USERS; ){
+  // Determine community for this user using the communities array
+  if(assignedToCurrent >= communities[communityIndex]){ communityIndex++; assignedToCurrent = 0; }
+  const community = communityIndex;
+  assignedToCurrent++;
+
+  const _id = GLOBAL_USER_ID++;
+  const gender = rand() < 0.5 ? 'female' : 'male';
+  const place = choice(cities);
+  const primary = pickPrimaryLang(place.lang);
+  const languagesList = buildLanguages(primary);
+  const education = choice(educations);
+  const profession = choice(professions);
+  const nInterests = randint(1,3);
+  const interests = sample(interestsPool, nInterests);
+  const dateJoined = dateRandom(2016);
+  const purpose = choice(purposes);
+  const thirdParty = randBool(0.25);
+  const name = randomName(gender);
+
+  const userDoc = {
+    _id, name, age: randint(16, 60), gender,
+    location: { city: place.city, state: (place.state || ""), country: 'India' },
+    languages: languagesList, primaryLang: primary, joinedAt: dateJoined,
+    education, profession, interests, purpose, thirdParty, community
+  };
+
+  userBatch.push(userDoc);
+
+  // Maintain minimal metadata
+  allUserIds.push(_id);
+  if(!idsByCommunity[community]) idsByCommunity[community] = [];
+  idsByCommunity[community].push(_id);
+  if(!idsByCity[place.city]) idsByCity[place.city] = [];
+  idsByCity[place.city].push(_id);
+  degree[_id] = 0;
+
+  created++;
+
+  if(userBatch.length >= BATCH_SIZE || created === N_USERS){
+    // insert batch
+    try {
+      db.users.insertMany(userBatch, { ordered: false });
+    } catch(e){
+      print("Warning: insertMany users batch error (continuing).", e);
+    }
+    print("Inserted users so far: " + db.users.countDocuments());
+    userBatch = [];
   }
 }
-db.users.insertMany(users);
-print("Inserted users:" + db.users.countDocuments());
 
-// ---------------- prepare helper indexes ----------------
-const idsByCommunity = {};
-for(const u of users){
-  const c = u.community;
-  if(!idsByCommunity[c]) idsByCommunity[c] = [];
-  idsByCommunity[c].push(u._id);
-}
-const idsByCity = {};
-for(const u of users){
-  const c = u.location.city;
-  if(!idsByCity[c]) idsByCity[c] = [];
-  idsByCity[c].push(u._id);
-}
-const degree = {};
-for(const u of users) degree[u._id] = 0;
+print("Finished creating users. Total users inserted (count): " + db.users.countDocuments());
 
+// ---------------- helper for pair key ----------------
 function pairKey(a,b){
-  const s = a.toString(), t = b.toString(); // Use .toString() on numbers
+  const s = a.toString(), t = b.toString();
   return (s < t) ? s+"|"+t : t+"|"+s;
 }
 
-// ---------------- generate biased friend edges (target total) ----------------
-print("Generating biased friend edges (batched).");
-const friendSet = {};
+// ---------------- generate biased friend edges (batched) ----------------
+print("Preparing to generate biased friend edges (batched).");
+
+const friendSet = {}; // keep track of undirected pairs inserted
 let edgeBatch = [];
-function flushEdges(){ if(edgeBatch.length){ db.edges.insertMany(edgeBatch); edgeBatch = []; } }
-
-let targetEdges = randint(TARGET_EDGE_MIN, TARGET_EDGE_MAX);
-const targetDegrees = {};
-let remainingDegree = targetEdges * 2;
-
-// assign degrees
-for (const u of users) {
-  let d = Math.max(1, Math.floor(randint(AVG_DEGREE - FRIEND_DEGREE_VARIANCE, AVG_DEGREE + FRIEND_DEGREE_VARIANCE)));
-  if (remainingDegree - d < 0) d = remainingDegree;
-  targetDegrees[u._id] = d;
-  remainingDegree -= d;
-  if (remainingDegree <= 0) break;
+function flushEdges(){
+  if(edgeBatch.length){
+    try {
+      db.edges.insertMany(edgeBatch, { ordered: false });
+    } catch(e){
+      // duplicates or other errors shouldn't stop the run; print and continue
+      print("Edge batch insert warning:", e);
+    }
+    edgeBatch = [];
+  }
 }
-if (remainingDegree > 0) {
-  for (const id in targetDegrees) {
-    targetDegrees[id]++;
-    remainingDegree--;
-    if (remainingDegree <= 0) break;
+
+// Choose random target edges in specified range
+let targetEdges = randint(TARGET_EDGE_MIN, TARGET_EDGE_MAX);
+const totalStubs = targetEdges * 2;
+
+// 1) generate a base degree for each node (random around AVG_DEGREE)
+// 2) scale base degrees so sum(baseDegrees) ≈ totalStubs
+const baseDegrees = {};
+let sumBase = 0;
+for(const id of allUserIds){
+  const d = Math.max(1, Math.floor(randint(AVG_DEGREE - FRIEND_DEGREE_VARIANCE, AVG_DEGREE + FRIEND_DEGREE_VARIANCE)));
+  baseDegrees[id] = d;
+  sumBase += d;
+}
+
+// avoid divide by zero
+const scaleFactor = sumBase > 0 ? (totalStubs / sumBase) : 1.0;
+const targetDegrees = {};
+let sumAssigned = 0;
+for(const id of allUserIds){
+  let assigned = Math.max(1, Math.floor(baseDegrees[id] * scaleFactor));
+  targetDegrees[id] = assigned;
+  sumAssigned += assigned;
+}
+
+// fix rounding differences by distributing any remaining stubs
+let remaining = totalStubs - sumAssigned;
+let idx = 0;
+const idsLen = allUserIds.length;
+while(remaining > 0 && idsLen>0){
+  const id = allUserIds[idx % idsLen];
+  targetDegrees[id] += 1;
+  remaining--;
+  idx++;
+}
+if(remaining < 0){
+  // if we overshot (shouldn't normally happen), trim some
+  idx = 0;
+  while(remaining < 0 && idsLen>0){
+    const id = allUserIds[idx % idsLen];
+    if(targetDegrees[id] > 1){ targetDegrees[id] -= 1; remaining++; }
+    idx++;
   }
 }
 
 let expectedEdges = Math.floor(Object.values(targetDegrees).reduce((a,b)=>a+b,0)/2);
-print("Target friend edges:" + targetEdges, "expected ~" + expectedEdges);
+print("Target friend edges:" + targetEdges + "  expected ~" + expectedEdges);
 
-function pickNeighbor(uObj){
-  const uId = uObj._id;
-  const community = uObj.community;
+// --- create fast lookup maps: user id -> community index, user id -> city name
+const userCommunityMap = {};
+const userCityMap = {};
+for (const c in idsByCommunity) {
+  for (const id of idsByCommunity[c]) userCommunityMap[id] = parseInt(c);
+}
+for (const city in idsByCity) {
+  for (const id of idsByCity[city]) userCityMap[id] = city;
+}
+
+// neighbor selection function (biased to community, then city, else global)
+function pickNeighbor(uId){
+  const cidx = userCommunityMap[uId];
+  const city = userCityMap[uId];
   const r = rand();
   let pool = [];
-  if(r < 0.75 && idsByCommunity[community].length > 1){
-    pool = idsByCommunity[community];
-  } else if(r < 0.9 && idsByCity[uObj.location.city] && idsByCity[uObj.location.city].length > 1){
-    pool = idsByCity[uObj.location.city];
+  if(r < 0.75 && idsByCommunity[cidx] && idsByCommunity[cidx].length > 1){
+    pool = idsByCommunity[cidx];
+  } else if(r < 0.9 && idsByCity[city] && idsByCity[city].length > 1){
+    pool = idsByCity[city];
   } else {
-    pool = users.map(x => x._id);
+    pool = allUserIds;
   }
-  // Use !== for number comparison instead of .equals()
-  const candidates = sample(pool.filter(id => id !== uId), Math.min(6, pool.length-1));
+  // sample a few and pick the one with highest degree (prefer higher-degree)
+  const candidates = sample(pool.filter(id => id !== uId), Math.min(6, Math.max(0, pool.length-1)));
   let best = null;
   let bestDeg = -1;
   for(const cand of candidates){
-    const dv = degree[cand] || 0; // Access degree directly with number
+    const dv = degree[cand] || 0;
     if(dv > bestDeg && cand !== uId) { best = cand; bestDeg = dv; }
   }
   if(!best && candidates.length) best = candidates[0];
   return best;
 }
 
+// Now create friend edges trying to respect targetDegrees
 let totalEdges = 0;
-for (const u of users) {
-  const uId = u._id;
-  const desired = targetDegrees[uId];
+let progressCounter = 0;
+for(const uId of allUserIds){
+  const desired = targetDegrees[uId] || 1;
   let tries = 0;
   while (degree[uId] < desired && totalEdges < targetEdges) {
-    if (tries++ > desired * 10) break;
-    const vId = pickNeighbor(u);
+    if (tries++ > desired * 15) break; // avoid infinite loops for hard-to-find neighbors
+    const vId = pickNeighbor(uId);
     if (!vId) continue;
-    if (uId === vId) continue; // Use === for number comparison
+    if (uId === vId) continue;
     const k = pairKey(uId, vId);
     if (friendSet[k]) continue;
     friendSet[k] = true;
+    // push undirected friend edge once (src/dst arbitrary)
     edgeBatch.push({ type: 'friend', src: uId, dst: vId, pair: k, weight: 1.0 });
-    degree[uId]++;
-    degree[vId]++;
+    degree[uId]++; degree[vId] = (degree[vId] || 0) + 1;
     totalEdges++;
-    if (edgeBatch.length >= BATCH_SIZE) flushEdges();
+    if(edgeBatch.length >= BATCH_SIZE) flushEdges();
+    // occasionally print progress
+    if(++progressCounter % 50000 === 0) print("Friend edges produced so far: " + totalEdges);
   }
   if (totalEdges >= targetEdges) break;
 }
 flushEdges();
-print("Friend edges inserted (capped): " +db.edges.countDocuments({type:'friend'}));
+print("Friend edges inserted (capped): " + db.edges.countDocuments({type:'friend'}));
 
 // ---------------- generate follow edges ----------------
 print("Generating follow (directed) edges...");
 let followBatch = [];
-function flushFollow(){ if(followBatch.length){ db.edges.insertMany(followBatch); followBatch = []; } }
+function flushFollow(){
+  if(followBatch.length){
+    try {
+      db.edges.insertMany(followBatch, { ordered: false });
+    } catch(e){
+      print("Follow batch insert warning:", e);
+    }
+    followBatch = [];
+  }
+}
 const followSet = {};
-for(const u of users){
+for(const uId of allUserIds){
   const nF = randint(FOLLOW_MIN, FOLLOW_MAX);
   let made = 0;
   let tries = 0;
   while(made < nF && tries < nF*8){
     tries++;
     let candidate;
-    if(rand() < 0.4){
-      candidate = choice(users)._id;
-    } else if(rand() < 0.8){
-      candidate = choice(idsByCommunity[u.community]);
+    const r = rand();
+    if(r < 0.4){
+      candidate = choice(allUserIds);
+    } else if(r < 0.8){
+      const commList = idsByCommunity[userCommunityMap[uId]];
+      candidate = choice(commList);
     } else {
-      candidate = choice(users)._id;
+      candidate = choice(allUserIds);
     }
-    if(candidate === u._id) continue; // Use === for number comparison
-    const key = u._id+"|"+candidate;
+    if(candidate === uId) continue;
+    const key = uId + "|" + candidate;
     if(followSet[key]) continue;
     followSet[key] = true;
-    followBatch.push({ type: 'follow', src: u._id, dst: candidate, weight: 1.0 });
+    followBatch.push({ type: 'follow', src: uId, dst: candidate, weight: 1.0 });
     made++;
     if(followBatch.length >= BATCH_SIZE) flushFollow();
   }
 }
 flushFollow();
-print("Total edges after follows:" +db.edges.countDocuments());
+print("Total edges after follows: " + db.edges.countDocuments());
 
-// ---------------- interactions ----------------
-print("Generating interactions...");
+// ---------------- interactions (batched) ----------------
+print("Generating interactions (batched)...");
 let interactionsBatch = [];
-function flushInteractions(){ if(interactionsBatch.length){ db.interactions.insertMany(interactionsBatch); interactionsBatch = []; } }
+function flushInteractions(){
+  if(interactionsBatch.length){
+    try {
+      db.interactions.insertMany(interactionsBatch, { ordered: false });
+    } catch(e){
+      print("Interactions batch insert warning:", e);
+    }
+    interactionsBatch = [];
+  }
+}
 const interactionTypes = ['message','like','comment','view'];
 for(let i=0;i<N_INTERACTIONS;i++){
-  const actor = choice(users)._id;
-  const target = choice(users)._id;
-  if(actor === target) continue; // Use === for number comparison
+  const actor = choice(allUserIds);
+  const target = choice(allUserIds);
+  if(actor === target) continue;
   const t = choice(interactionTypes);
   const w = t === 'message' ? 2.0 : t === 'comment' ? 1.5 : t === 'like' ? 1.0 : 0.5;
   interactionsBatch.push({ actor, target, type: t, weight: w, createdAt: new Date() });
   if(interactionsBatch.length >= BATCH_SIZE) flushInteractions();
 }
 flushInteractions();
-print("Interactions: " + db.interactions.countDocuments());
+print("Interactions inserted: " + db.interactions.countDocuments());
 
 // ---------------- indexes ----------------
 print("Creating indexes...");
-db.users.createIndex({"location.city":1});
-db.users.createIndex({"primaryLang":1});
-db.users.createIndex({"community":1});
-db.edges.createIndex({type:1, src:1});
-db.edges.createIndex({type:1, dst:1});
-db.edges.createIndex({pair:1},{unique:true,partialFilterExpression:{type:'friend'}});
-db.edges.createIndex({type:1,src:1,dst:1},{unique:true,partialFilterExpression:{type:'follow'}});
-db.interactions.createIndex({actor:1});
-db.interactions.createIndex({target:1});
+try { db.users.createIndex({"location.city":1}); } catch(e){ print("idx users.city:", e); }
+try { db.users.createIndex({"primaryLang":1}); } catch(e){ print("idx users.primaryLang:", e); }
+try { db.users.createIndex({"community":1}); } catch(e){ print("idx users.community:", e); }
+try { db.edges.createIndex({type:1, src:1}); } catch(e){ print("idx edges.src:", e); }
+try { db.edges.createIndex({type:1, dst:1}); } catch(e){ print("idx edges.dst:", e); }
+try { db.edges.createIndex({pair:1},{unique:true,partialFilterExpression:{type:'friend'}}); } catch(e){ print("idx edges.pair:", e); }
+try { db.edges.createIndex({type:1,src:1,dst:1},{unique:true,partialFilterExpression:{type:'follow'}}); } catch(e){ print("idx edges.srcdst:", e); }
+try { db.interactions.createIndex({actor:1}); } catch(e){ print("idx interactions.actor:", e); }
+try { db.interactions.createIndex({target:1}); } catch(e){ print("idx interactions.target:", e); }
 
 print("Summary:");
 printjson({
@@ -291,3 +387,5 @@ printjson({
   interactions: db.interactions.countDocuments()
 });
 print("Done. Next: load('mongo_queries_examples.js') to explore.");
+
+// ---------- end ----------
